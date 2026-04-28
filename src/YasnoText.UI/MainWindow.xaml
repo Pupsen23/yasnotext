@@ -7,7 +7,59 @@
         Title="ЯсноТекст"
         Height="700"
         Width="1100"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource TextBrush}"
+        FontFamily="{DynamicResource UIFontFamily}">
+
+    <Window.Resources>
+        <!-- Стиль для кнопок панели инструментов -->
+        <Style x:Key="ToolbarButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontFamily="{TemplateBinding FontFamily}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource WindowBackgroundBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Стиль для пунктов меню верхнего уровня -->
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
+        </Style>
+
+        <!-- Стиль для самого Menu -->
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+        </Style>
+    </Window.Resources>
 
     <DockPanel>
 
@@ -38,30 +90,52 @@
         </Menu>
 
         <!-- Панель инструментов -->
-        <ToolBarTray DockPanel.Dock="Top">
-            <ToolBar>
-                <Button Content="📂 Открыть" Padding="8,4" Margin="2" />
-                <Button Content="💾 Сохранить" Padding="8,4" Margin="2" />
-                <Separator />
-                <Button Content="🔍 Распознать (OCR)" Padding="8,4" Margin="2" />
-                <Separator />
-                <Button Content="A−" Padding="8,4" Margin="2" />
-                <TextBlock Text="14pt" VerticalAlignment="Center" Margin="6,0" MinWidth="36" TextAlignment="Center" />
-                <Button Content="A+" Padding="8,4" Margin="2" />
-                <Separator />
-                <Button Content="▶ Озвучить" Padding="8,4" Margin="2" />
-            </ToolBar>
-        </ToolBarTray>
+        <Border DockPanel.Dock="Top"
+                Background="{DynamicResource WindowBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="10,8">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="📂 Открыть" Style="{StaticResource ToolbarButton}" />
+                <Button Content="💾 Сохранить" Style="{StaticResource ToolbarButton}" />
+                <Rectangle Width="1" Margin="6,2"
+                           Fill="{DynamicResource BorderBrush}" />
+                <Button Content="🔍 Распознать (OCR)" Style="{StaticResource ToolbarButton}" />
+                <Rectangle Width="1" Margin="6,2"
+                           Fill="{DynamicResource BorderBrush}" />
+                <Button Content="A−" Style="{StaticResource ToolbarButton}" />
+                <TextBlock Text="14pt"
+                           VerticalAlignment="Center"
+                           Margin="8,0"
+                           MinWidth="40"
+                           TextAlignment="Center"
+                           Foreground="{DynamicResource TextBrush}" />
+                <Button Content="A+" Style="{StaticResource ToolbarButton}" />
+                <Rectangle Width="1" Margin="6,2"
+                           Fill="{DynamicResource BorderBrush}" />
+                <Button Content="▶ Озвучить" Style="{StaticResource ToolbarButton}" />
+            </StackPanel>
+        </Border>
 
         <!-- Строка состояния -->
-        <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock Text="Готов к работе" />
-            </StatusBarItem>
-            <StatusBarItem HorizontalAlignment="Right">
-                <TextBlock Text="Профиль: Стандартный · 14pt" />
-            </StatusBarItem>
-        </StatusBar>
+        <Border DockPanel.Dock="Bottom"
+                Background="{DynamicResource SidebarBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="10,4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="Готов к работе"
+                           Foreground="{DynamicResource SecondaryTextBrush}" />
+                <TextBlock Grid.Column="1"
+                           Text="Профиль: Стандартный · 14pt"
+                           Foreground="{DynamicResource SecondaryTextBrush}" />
+            </Grid>
+        </Border>
 
         <!-- Главная область: боковая панель + область чтения -->
         <Grid>
@@ -72,75 +146,104 @@
 
             <!-- Боковая панель: профили и настройки -->
             <Border Grid.Column="0"
-                    Background="#F5F5F0"
-                    BorderBrush="#D0D0C8"
+                    Background="{DynamicResource SidebarBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,1,0"
                     Padding="12">
                 <StackPanel>
                     <TextBlock Text="ПРОФИЛИ"
                                FontSize="11"
                                FontWeight="Medium"
-                               Foreground="#666"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
                                Margin="0,0,0,8" />
 
-                    <!-- Карточка: Стандартный -->
-                    <Border Background="White"
-                            BorderBrush="#1E88E5"
+                    <!-- Карточка: Стандартный (активный, выделен фоном AccentBrush) -->
+                    <Border Background="{DynamicResource AccentBrush}"
+                            BorderBrush="{DynamicResource AccentBrush}"
                             BorderThickness="2"
                             CornerRadius="4"
                             Padding="10,8"
                             Margin="0,0,0,6">
                         <StackPanel>
-                            <TextBlock Text="Стандартный" FontWeight="Medium" FontSize="13" />
-                            <TextBlock Text="Активен · Ctrl+1" FontSize="11" Foreground="#1E88E5" Margin="0,2,0,0" />
+                            <TextBlock Text="Стандартный"
+                                       FontWeight="Bold"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource WindowBackgroundBrush}" />
+                            <TextBlock Text="Активен · Ctrl+1"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource WindowBackgroundBrush}"
+                                       Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
 
                     <!-- Карточка: Слабовидение -->
-                    <Border Background="White"
-                            BorderBrush="#D0D0C8"
+                    <Border Background="{DynamicResource CardBackgroundBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
                             BorderThickness="1"
                             CornerRadius="4"
                             Padding="10,8"
                             Margin="0,0,0,6"
                             Cursor="Hand">
                         <StackPanel>
-                            <TextBlock Text="Слабовидение" FontWeight="Medium" FontSize="13" />
-                            <TextBlock Text="Ctrl+2" FontSize="11" Foreground="#888" Margin="0,2,0,0" />
+                            <TextBlock Text="Слабовидение"
+                                       FontWeight="Medium"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource TextBrush}" />
+                            <TextBlock Text="Ctrl+2"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                       Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
 
                     <!-- Карточка: Дислексия -->
-                    <Border Background="White"
-                            BorderBrush="#D0D0C8"
+                    <Border Background="{DynamicResource CardBackgroundBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
                             BorderThickness="1"
                             CornerRadius="4"
                             Padding="10,8"
                             Margin="0,0,0,6"
                             Cursor="Hand">
                         <StackPanel>
-                            <TextBlock Text="Дислексия" FontWeight="Medium" FontSize="13" />
-                            <TextBlock Text="Ctrl+3" FontSize="11" Foreground="#888" Margin="0,2,0,0" />
+                            <TextBlock Text="Дислексия"
+                                       FontWeight="Medium"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource TextBrush}" />
+                            <TextBlock Text="Ctrl+3"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                       Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
 
                     <TextBlock Text="НАСТРОЙКИ"
                                FontSize="11"
                                FontWeight="Medium"
-                               Foreground="#666"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
                                Margin="0,16,0,8" />
 
-                    <TextBlock Text="Шрифт" FontSize="12" Margin="0,0,0,4" />
-                    <ComboBox SelectedIndex="0" Margin="0,0,0,10">
+                    <TextBlock Text="Шрифт"
+                               FontSize="12"
+                               Margin="0,0,0,4"
+                               Foreground="{DynamicResource TextBrush}" />
+                    <ComboBox SelectedIndex="0"
+                              Margin="0,0,0,10"
+                              Foreground="Black">
                         <ComboBoxItem Content="Segoe UI" />
                         <ComboBoxItem Content="Arial" />
                         <ComboBoxItem Content="OpenDyslexic" />
                     </ComboBox>
 
-                    <TextBlock Text="Межбуквенный интервал" FontSize="12" Margin="0,0,0,4" />
+                    <TextBlock Text="Межбуквенный интервал"
+                               FontSize="12"
+                               Margin="0,0,0,4"
+                               Foreground="{DynamicResource TextBrush}" />
                     <Slider Minimum="0" Maximum="10" Value="0" Margin="0,0,0,10" />
 
-                    <TextBlock Text="Высота строки" FontSize="12" Margin="0,0,0,4" />
+                    <TextBlock Text="Высота строки"
+                               FontSize="12"
+                               Margin="0,0,0,4"
+                               Foreground="{DynamicResource TextBrush}" />
                     <Slider Minimum="1" Maximum="3" Value="1.5" TickFrequency="0.5" />
                 </StackPanel>
             </Border>
@@ -148,11 +251,18 @@
             <!-- Область чтения -->
             <ScrollViewer Grid.Column="1"
                           VerticalScrollBarVisibility="Auto"
-                          Background="White">
+                          Background="{DynamicResource ReadingBackgroundBrush}">
                 <FlowDocumentScrollViewer x:Name="ReaderViewer"
                                           Padding="32,24"
+                                          Background="{DynamicResource ReadingBackgroundBrush}"
+                                          Foreground="{DynamicResource TextBrush}"
                                           VerticalScrollBarVisibility="Hidden">
-                    <FlowDocument FontFamily="Segoe UI" FontSize="14" PagePadding="0">
+                    <FlowDocument FontFamily="{DynamicResource ReadingFontFamily}"
+                                  FontSize="{DynamicResource ReadingFontSize}"
+                                  FontWeight="{DynamicResource ReadingFontWeight}"
+                                  Foreground="{DynamicResource TextBrush}"
+                                  Background="{DynamicResource ReadingBackgroundBrush}"
+                                  PagePadding="0">
                         <Paragraph FontSize="20" FontWeight="Medium">
                             Добро пожаловать в ЯсноТекст
                         </Paragraph>
