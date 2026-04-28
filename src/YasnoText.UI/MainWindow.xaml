@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:YasnoText.UI.ViewModels"
         mc:Ignorable="d"
         Title="ЯсноТекст"
         Height="700"
@@ -13,6 +14,7 @@
         FontFamily="{DynamicResource UIFontFamily}">
 
     <Window.Resources>
+
         <!-- Стиль для кнопок панели инструментов -->
         <Style x:Key="ToolbarButton" TargetType="Button">
             <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
@@ -47,18 +49,76 @@
             </Setter>
         </Style>
 
-        <!-- Стиль для пунктов меню верхнего уровня -->
+        <!-- Стиль для пунктов меню -->
         <Style TargetType="MenuItem">
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
         </Style>
 
-        <!-- Стиль для самого Menu -->
         <Style TargetType="Menu">
             <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
         </Style>
+
+        <!-- Стиль для рамки карточки профиля. -->
+        <!-- DataTrigger реагирует на свойство IsActive в ProfileItemViewModel -->
+        <!-- и переключает фон/рамку между обычным и активным состоянием. -->
+        <Style x:Key="ProfileCardBorder" TargetType="Border">
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Стиль для названия профиля внутри карточки -->
+        <Style x:Key="ProfileCardTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter Property="FontWeight" Value="Bold" />
+                    <Setter Property="Foreground" Value="{DynamicResource WindowBackgroundBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Стиль для подписи под названием -->
+        <Style x:Key="ProfileCardHotkey" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource WindowBackgroundBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Шаблон одной карточки профиля -->
+        <DataTemplate x:Key="ProfileCardTemplate" DataType="{x:Type vm:ProfileItemViewModel}">
+            <Border Style="{StaticResource ProfileCardBorder}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick"
+                                  Command="{Binding DataContext.SelectProfileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}" />
+                </Border.InputBindings>
+                <StackPanel>
+                    <TextBlock Text="{Binding Name}" Style="{StaticResource ProfileCardTitle}" />
+                    <TextBlock Text="{Binding HotkeyLabel}" Style="{StaticResource ProfileCardHotkey}" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
 
     <DockPanel>
@@ -72,9 +132,18 @@
                 <MenuItem Header="Выход" />
             </MenuItem>
             <MenuItem Header="Профиль">
-                <MenuItem Header="Стандартный" InputGestureText="Ctrl+1" />
-                <MenuItem Header="Слабовидение" InputGestureText="Ctrl+2" />
-                <MenuItem Header="Дислексия" InputGestureText="Ctrl+3" />
+                <MenuItem Header="Стандартный"
+                          InputGestureText="Ctrl+1"
+                          Command="{Binding SelectProfileCommand}"
+                          CommandParameter="{Binding Profiles[0]}" />
+                <MenuItem Header="Слабовидение"
+                          InputGestureText="Ctrl+2"
+                          Command="{Binding SelectProfileCommand}"
+                          CommandParameter="{Binding Profiles[1]}" />
+                <MenuItem Header="Дислексия"
+                          InputGestureText="Ctrl+3"
+                          Command="{Binding SelectProfileCommand}"
+                          CommandParameter="{Binding Profiles[2]}" />
             </MenuItem>
             <MenuItem Header="Вид">
                 <MenuItem Header="Увеличить шрифт" InputGestureText="Ctrl++" />
@@ -132,7 +201,7 @@
                            Text="Готов к работе"
                            Foreground="{DynamicResource SecondaryTextBrush}" />
                 <TextBlock Grid.Column="1"
-                           Text="Профиль: Стандартный · 14pt"
+                           Text="{Binding StatusText}"
                            Foreground="{DynamicResource SecondaryTextBrush}" />
             </Grid>
         </Border>
@@ -144,7 +213,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Боковая панель: профили и настройки -->
+            <!-- Боковая панель -->
             <Border Grid.Column="0"
                     Background="{DynamicResource SidebarBackgroundBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
@@ -157,64 +226,9 @@
                                Foreground="{DynamicResource SecondaryTextBrush}"
                                Margin="0,0,0,8" />
 
-                    <!-- Карточка: Стандартный (активный, выделен фоном AccentBrush) -->
-                    <Border Background="{DynamicResource AccentBrush}"
-                            BorderBrush="{DynamicResource AccentBrush}"
-                            BorderThickness="2"
-                            CornerRadius="4"
-                            Padding="10,8"
-                            Margin="0,0,0,6">
-                        <StackPanel>
-                            <TextBlock Text="Стандартный"
-                                       FontWeight="Bold"
-                                       FontSize="13"
-                                       Foreground="{DynamicResource WindowBackgroundBrush}" />
-                            <TextBlock Text="Активен · Ctrl+1"
-                                       FontSize="11"
-                                       Foreground="{DynamicResource WindowBackgroundBrush}"
-                                       Margin="0,2,0,0" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Карточка: Слабовидение -->
-                    <Border Background="{DynamicResource CardBackgroundBrush}"
-                            BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="10,8"
-                            Margin="0,0,0,6"
-                            Cursor="Hand">
-                        <StackPanel>
-                            <TextBlock Text="Слабовидение"
-                                       FontWeight="Medium"
-                                       FontSize="13"
-                                       Foreground="{DynamicResource TextBrush}" />
-                            <TextBlock Text="Ctrl+2"
-                                       FontSize="11"
-                                       Foreground="{DynamicResource SecondaryTextBrush}"
-                                       Margin="0,2,0,0" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Карточка: Дислексия -->
-                    <Border Background="{DynamicResource CardBackgroundBrush}"
-                            BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="10,8"
-                            Margin="0,0,0,6"
-                            Cursor="Hand">
-                        <StackPanel>
-                            <TextBlock Text="Дислексия"
-                                       FontWeight="Medium"
-                                       FontSize="13"
-                                       Foreground="{DynamicResource TextBrush}" />
-                            <TextBlock Text="Ctrl+3"
-                                       FontSize="11"
-                                       Foreground="{DynamicResource SecondaryTextBrush}"
-                                       Margin="0,2,0,0" />
-                        </StackPanel>
-                    </Border>
+                    <!-- Карточки профилей рендерятся из коллекции через ItemsControl -->
+                    <ItemsControl ItemsSource="{Binding Profiles}"
+                                  ItemTemplate="{StaticResource ProfileCardTemplate}" />
 
                     <TextBlock Text="НАСТРОЙКИ"
                                FontSize="11"
@@ -276,7 +290,8 @@
                         </Paragraph>
                         <Paragraph>
                             Выберите подходящий профиль слева — интерфейс автоматически
-                            подстроится под ваши потребности.
+                            подстроится под ваши потребности. Также можно использовать
+                            горячие клавиши: Ctrl+1, Ctrl+2, Ctrl+3.
                         </Paragraph>
                     </FlowDocument>
                 </FlowDocumentScrollViewer>
