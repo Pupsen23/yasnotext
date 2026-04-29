@@ -20,6 +20,7 @@ public class MainViewModel : ViewModelBase
     private ProfileItemViewModel? _activeProfile;
     private string _documentText = string.Empty;
     private string _documentInfo = "Документ не открыт";
+    private bool _isLoading;
 
     public MainViewModel(IThemeApplier themeApplier)
     {
@@ -46,7 +47,10 @@ public class MainViewModel : ViewModelBase
             }
         });
 
-        OpenDocumentCommand = new RelayCommand(_ => OpenDocument());
+        // Команда открытия документа: запрещена, пока идёт загрузка предыдущего.
+        OpenDocumentCommand = new RelayCommand(
+            execute: async _ => await OpenDocumentAsync(),
+            canExecute: _ => !IsLoading);
 
         // По умолчанию активен Стандартный профиль.
         ActivateProfile(Profiles.First());
@@ -91,6 +95,21 @@ public class MainViewModel : ViewModelBase
         private set => SetProperty(ref _documentInfo, value);
     }
 
+    /// <summary>true, пока документ читается в фоновом потоке.</summary>
+    public bool IsLoading
+    {
+        get => _isLoading;
+        private set
+        {
+            if (SetProperty(ref _isLoading, value))
+            {
+                // Команды должны переоценить CanExecute, чтобы кнопка стала
+                // disabled во время загрузки.
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
     public ICommand SelectProfileCommand { get; }
     public ICommand OpenDocumentCommand { get; }
 
@@ -129,7 +148,12 @@ public class MainViewModel : ViewModelBase
         _themeApplier.Apply(profileVm.Profile.Id);
     }
 
-    private void OpenDocument()
+    /// <summary>
+    /// Открывает PDF-документ асинхронно.
+    /// Чтение файла выполняется в фоновом потоке, чтобы UI оставался отзывчивым
+    /// даже при работе с большими документами.
+    /// </summary>
+    private async Task OpenDocumentAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -143,20 +167,29 @@ public class MainViewModel : ViewModelBase
             return;
         }
 
+        var filePath = dialog.FileName;
+        var fileName = Path.GetFileName(filePath);
+
+        if (!_pdfReader.CanRead(filePath))
+        {
+            MessageBox.Show(
+                "Этот формат файла пока не поддерживается. Откройте PDF-документ.",
+                "ЯсноТекст",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        // Показываем индикатор загрузки. UI остаётся живым, потому что
+        // тяжёлая работа уезжает в Task.Run.
+        IsLoading = true;
+        DocumentInfo = $"Открываю {fileName}...";
+
         try
         {
-            if (!_pdfReader.CanRead(dialog.FileName))
-            {
-                MessageBox.Show(
-                    "Этот формат файла пока не поддерживается. " +
-                    "Откройте PDF-документ.",
-                    "ЯсноТекст",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-                return;
-            }
-
-            var result = _pdfReader.Read(dialog.FileName);
+            // Чтение PDF — операция, ограниченная процессором и диском.
+            // Task.Run переносит её в пул потоков, освобождая UI-поток.
+            var result = await Task.Run(() => _pdfReader.Read(filePath));
 
             if (result.IsEmpty)
             {
@@ -168,12 +201,13 @@ public class MainViewModel : ViewModelBase
                     MessageBoxImage.Information);
 
                 DocumentText = "В документе не найден текст.";
-                DocumentInfo = $"{Path.GetFileName(dialog.FileName)} · скан без OCR";
+                DocumentInfo = $"{fileName} · скан без OCR";
                 return;
             }
 
+            // После await мы снова на UI-потоке, можно безопасно менять свойства.
             DocumentText = result.Text;
-            DocumentInfo = $"{Path.GetFileName(dialog.FileName)} · {result.PageCount} стр.";
+            DocumentInfo = $"{fileName} · {result.PageCount} стр.";
         }
         catch (Exception ex)
         {
@@ -182,6 +216,12 @@ public class MainViewModel : ViewModelBase
                 "Ошибка",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+
+            DocumentInfo = "Документ не открыт";
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 }
