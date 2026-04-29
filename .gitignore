@@ -58,7 +58,7 @@ src/YasnoText.UI/tessdata/*.traineddata
 
 # Локальные настройки и тестовые файлы
 appsettings.local.json
-test-files/
+#test-files/
 *.pdf
 *.docx
 *.djvu
@@ -74,3 +74,6 @@ desktop.ini
 *.bak
 *.swp
 *~
+
+# Тестовые PDF должны коммититься
+!test-files/*.pdf

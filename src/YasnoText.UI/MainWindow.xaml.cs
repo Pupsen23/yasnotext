@@ -1,23 +1,37 @@
-﻿using System.Text;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using YasnoText.UI.Themes;
+using YasnoText.UI.ViewModels;
 
 namespace YasnoText.UI;
 
-/// <summary>
-/// Interaction logic for MainWindow.xaml
-/// </summary>
 public partial class MainWindow : Window
 {
+    private readonly MainViewModel _viewModel;
+
     public MainWindow()
     {
         InitializeComponent();
+
+        _viewModel = new MainViewModel(new WpfThemeApplier());
+        DataContext = _viewModel;
+
+        // Горячие клавиши переключения профиля
+        InputBindings.Add(new KeyBinding(
+            new RelayCommand(() => _viewModel.ActivateById("standard")),
+            Key.D1, ModifierKeys.Control));
+
+        InputBindings.Add(new KeyBinding(
+            new RelayCommand(() => _viewModel.ActivateById("low-vision")),
+            Key.D2, ModifierKeys.Control));
+
+        InputBindings.Add(new KeyBinding(
+            new RelayCommand(() => _viewModel.ActivateById("dyslexia")),
+            Key.D3, ModifierKeys.Control));
+
+        // Горячая клавиша открытия документа
+        InputBindings.Add(new KeyBinding(
+            _viewModel.OpenDocumentCommand,
+            Key.O, ModifierKeys.Control));
     }
 }
