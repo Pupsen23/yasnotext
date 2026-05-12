@@ -5,6 +5,9 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using YasnoText.Core.TextProcessing;
+using YasnoText.Core.Tts;
 using YasnoText.UI.Themes;
 using YasnoText.UI.ViewModels;
 
@@ -24,6 +27,16 @@ public partial class MainWindow : Window
     /// Чем больше — тем отзывчивее, но резче. 12 даёт ~0.4 сек до ~95% целевой скорости.</summary>
     private const double AutoScrollSmoothingRate = 12.0;
 
+    /// <summary>Верхний предел абсолютной скорости (px/s). Защита от зависаний
+    /// на огромных документах с большим шрифтом, где каждый ScrollToVerticalOffset
+    /// заставляет WPF пересчитывать тяжёлый layout.</summary>
+    private const double AutoScrollMaxSpeed = 2500;
+
+    /// <summary>Верхняя клипа на dt одного кадра. Если кадр пришёл с лагом
+    /// (например, ScrollToVerticalOffset подвис), не интегрируем огромный
+    /// прыжок за «прошедшее» время — иначе вылетим в самый низ за один тик.</summary>
+    private const double AutoScrollMaxFrameDt = 0.05;
+
     private readonly MainViewModel _viewModel;
 
     private bool _autoScrollActive;
@@ -32,17 +45,31 @@ public partial class MainWindow : Window
     private TimeSpan _autoScrollLastFrameTime;
     private ScrollViewer? _innerScrollViewer;
 
+    /// <summary>Внутренний идентификатор формата для drag-and-drop профилей.</summary>
+    private const string ProfileCardDragFormat = "YasnoText.ProfileCard";
+
+    private Point? _profileDragStartPoint;
+    private ProfileItemViewModel? _profileDragSource;
+
+    /// <summary>Range каждого предложения в текущем FlowDocument:
+    /// start/end — offset'ы в DocumentText, run — соответствующий WPF-Run для подсветки.</summary>
+    private readonly List<(int start, int end, Run run)> _sentenceRuns = new();
+    private Run? _currentlyHighlightedRun;
+
     public MainWindow()
     {
         InitializeComponent();
 
-        _viewModel = new MainViewModel(new WpfThemeApplier());
+        _viewModel = new MainViewModel(
+            new WpfThemeApplier(),
+            new YasnoText.UI.Tts.SystemSpeechService());
         DataContext = _viewModel;
 
         // FlowDocument строится в code-behind, потому что у FlowDocument
         // нет ItemsSource или биндинга к строке — нужен явный пересбор
         // блоков при изменении текста или межстрочного интервала.
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _viewModel.SpeechProgress += OnSpeechProgress;
         UpdateReadingDocument();
 
         // Автопрокрутка. Middle-click ловим через PreviewMouseDown viewer'а;
@@ -50,6 +77,20 @@ public partial class MainWindow : Window
         ReadingViewer.PreviewMouseDown += OnReadingViewerPreviewMouseDown;
         PreviewMouseDown += OnWindowPreviewMouseDownForAutoScroll;
         PreviewKeyDown += OnWindowPreviewKeyDownForAutoScroll;
+
+        // Drag-and-drop файла. FlowDocumentScrollViewer помечает drag-события
+        // своим текстовым drag&drop'ом как handled, поэтому атрибуты на Window
+        // (DragOver=...) перестают срабатывать после открытия документа. Через
+        // AddHandler с handledEventsToo: true Window получает событие в любом
+        // случае, и drag-into-window работает над любой частью UI.
+        AddHandler(DragEnterEvent,
+            new DragEventHandler(OnWindowDragEnter), handledEventsToo: true);
+        AddHandler(DragOverEvent,
+            new DragEventHandler(OnWindowDragOver), handledEventsToo: true);
+        AddHandler(DragLeaveEvent,
+            new DragEventHandler(OnWindowDragLeave), handledEventsToo: true);
+        AddHandler(DropEvent,
+            new DragEventHandler(OnWindowDrop), handledEventsToo: true);
 
         // Drag-and-drop файла из проводника. Сама подписка через AllowDrop
         // и атрибуты DragOver/Drop в XAML — здесь только обработчики.
@@ -76,6 +117,24 @@ public partial class MainWindow : Window
         InputBindings.Add(new KeyBinding(
             _viewModel.SaveProfileCommand,
             Key.S, ModifierKeys.Control));
+
+        // Закрыть текущий документ.
+        InputBindings.Add(new KeyBinding(
+            _viewModel.CloseDocumentCommand,
+            Key.W, ModifierKeys.Control));
+
+        // Режим чтения — скрыть всё кроме текста.
+        InputBindings.Add(new KeyBinding(
+            _viewModel.ToggleReadingModeCommand,
+            Key.F11, ModifierKeys.None));
+
+        // Озвучка: F5 — старт/пауза/продолжить, Shift+F5 — стоп.
+        InputBindings.Add(new KeyBinding(
+            _viewModel.PlayPauseCommand,
+            Key.F5, ModifierKeys.None));
+        InputBindings.Add(new KeyBinding(
+            _viewModel.StopSpeechCommand,
+            Key.F5, ModifierKeys.Shift));
 
         // Изменение размера шрифта. OemPlus/OemMinus — это «=/+» и «-» на
         // основной части клавиатуры, Add/Subtract — на numpad.
@@ -162,16 +221,31 @@ public partial class MainWindow : Window
             // При загрузке нового документа автопрокрутка — лишний сюрприз.
             StopAutoScroll();
         }
+
+        // Если озвучка ушла в Stopped — снимаем подсветку, чтобы последнее
+        // прочитанное предложение не оставалось залитым.
+        if (e.PropertyName == nameof(MainViewModel.IsSpeaking) ||
+            e.PropertyName == nameof(MainViewModel.PlayPauseLabel))
+        {
+            if (!_viewModel.IsSpeaking && !_viewModel.IsPaused)
+            {
+                ClearSpeechHighlight();
+            }
+        }
     }
 
     /// <summary>
-    /// Пересобирает FlowDocument из текущего DocumentText, разбивая текст на
-    /// параграфы по двойному переносу строки. Виртуализация WPF работает
-    /// на уровне Paragraph-блоков, поэтому один большой Run на 250-страничный
-    /// документ не сработал бы — скролл всё равно лагал бы.
+    /// Пересобирает FlowDocument из текущего DocumentText. Каждый параграф
+    /// дополнительно разбивается на предложения через SentenceSplitter —
+    /// под каждое предложение свой Run. Список (offset, end, run) хранится в
+    /// _sentenceRuns: handler SpeechProgress находит по нему текущий Run и
+    /// подсвечивает фон.
     /// </summary>
     private void UpdateReadingDocument()
     {
+        ClearSpeechHighlight();
+        _sentenceRuns.Clear();
+
         var text = _viewModel.DocumentText ?? string.Empty;
 
         var fontFamily = new System.Windows.Media.FontFamily(_viewModel.CurrentFontFamily);
@@ -185,47 +259,152 @@ public partial class MainWindow : Window
             LineHeight = _viewModel.EffectiveLineHeight,
         };
 
-        var paragraphs = text.Split(ParagraphSeparators, StringSplitOptions.None);
-        foreach (var paragraphText in paragraphs)
+        // Разбор с учётом глобальных offset'ов: System.Speech даёт CharacterPosition
+        // относительно строки, скормленной в Speak() — это весь DocumentText. Чтобы
+        // найти Run, мы знаем точную координату каждого предложения в этой строке.
+        var pos = 0;
+        while (pos <= text.Length)
         {
-            if (string.IsNullOrEmpty(paragraphText))
+            var nextSepIdx = FindNextParagraphSeparator(text, pos, out var separatorLength);
+            var paraEnd = nextSepIdx < 0 ? text.Length : nextSepIdx;
+            var paraText = text.Substring(pos, paraEnd - pos);
+
+            if (!string.IsNullOrEmpty(paraText))
             {
-                continue;
+                var paragraph = new Paragraph
+                {
+                    FontFamily = fontFamily,
+                    FontSize = fontSize,
+                };
+
+                var sentences = SentenceSplitter.Split(paraText);
+                if (sentences.Count == 0)
+                {
+                    // На случай если SentenceSplitter ничего не вернул (только пробелы):
+                    // добавляем один Run на весь параграф, чтобы порядок Inlines был
+                    // консистентен с текстом.
+                    var run = new Run(paraText);
+                    paragraph.Inlines.Add(run);
+                    _sentenceRuns.Add((pos, pos + paraText.Length, run));
+                }
+                else
+                {
+                    var written = 0;
+                    foreach (var s in sentences)
+                    {
+                        // Восстанавливаем «соединительные» пробелы между предложениями —
+                        // они в исходном тексте есть, но SentenceSplitter их съел.
+                        if (s.Offset > written)
+                        {
+                            paragraph.Inlines.Add(new Run(paraText.Substring(written, s.Offset - written)));
+                        }
+
+                        var run = new Run(s.Text);
+                        paragraph.Inlines.Add(run);
+                        _sentenceRuns.Add((pos + s.Offset, pos + s.Offset + s.Length, run));
+                        written = s.Offset + s.Length;
+                    }
+
+                    if (written < paraText.Length)
+                    {
+                        paragraph.Inlines.Add(new Run(paraText.Substring(written)));
+                    }
+                }
+
+                doc.Blocks.Add(paragraph);
             }
 
-            // FontSize/FontFamily задаются и на FlowDocument, и на Paragraph:
-            // в WPF наследование TextElement-свойств от программно созданного
-            // FlowDocument к его блокам срабатывает не во всех конфигурациях
-            // FlowDocumentScrollViewer (A+/A− меняли только LineHeight, шрифт
-            // оставался прежним). Локальная установка на Paragraph — гарантия.
-            doc.Blocks.Add(new Paragraph(new Run(paragraphText))
-            {
-                FontFamily = fontFamily,
-                FontSize = fontSize,
-            });
+            if (nextSepIdx < 0) break;
+            pos = nextSepIdx + separatorLength;
         }
 
         ReadingViewer.Document = doc;
     }
 
-    private void OnAutoScrollButtonClick(object sender, RoutedEventArgs e)
+    /// <summary>Находит ближайший разделитель параграфов \r\n\r\n или \n\n,
+    /// возвращает его offset и точную длину (4 или 2).</summary>
+    private static int FindNextParagraphSeparator(string text, int startIndex, out int separatorLength)
     {
-        if (_autoScrollActive)
+        var crlf = text.IndexOf("\r\n\r\n", startIndex, StringComparison.Ordinal);
+        var lf = text.IndexOf("\n\n", startIndex, StringComparison.Ordinal);
+
+        if (crlf < 0 && lf < 0)
         {
-            StopAutoScroll();
+            separatorLength = 0;
+            return -1;
+        }
+        if (crlf < 0)
+        {
+            separatorLength = 2;
+            return lf;
+        }
+        if (lf < 0 || crlf <= lf)
+        {
+            separatorLength = 4;
+            return crlf;
+        }
+        separatorLength = 2;
+        return lf;
+    }
+
+    private void OnSpeechProgress(object? sender, SpeechProgressEventArgs e)
+    {
+        // SystemSpeechService поднимает событие из своего потока. На UI
+        // нельзя трогать Run.Background, поэтому маршалим — BeginInvoke,
+        // чтобы не блокировать TTS-callback.
+        Dispatcher.BeginInvoke(
+            new Action(() => HighlightSentenceAt(e.CharacterPosition)),
+            DispatcherPriority.Background);
+    }
+
+    private void HighlightSentenceAt(int characterPosition)
+    {
+        // Ищем предложение, в которое попадает текущая позиция произнесения.
+        // Список упорядочен по offset, поэтому достаточно линейного поиска —
+        // даже на 1000 предложений это микросекунды.
+        Run? target = null;
+        foreach (var (start, end, run) in _sentenceRuns)
+        {
+            if (characterPosition >= start && characterPosition < end)
+            {
+                target = run;
+                break;
+            }
+        }
+
+        if (target == null || target == _currentlyHighlightedRun)
+        {
             return;
         }
 
-        if (!_viewModel.HasDocument)
-        {
-            return;
-        }
+        ClearSpeechHighlight();
 
-        // Стартуем с центра области чтения.
-        var center = new Point(
-            AutoScrollOverlay.ActualWidth / 2,
-            AutoScrollOverlay.ActualHeight / 2);
-        StartAutoScroll(center);
+        target.Background = GetSentenceHighlightBrush();
+        _currentlyHighlightedRun = target;
+
+        // Подталкиваем viewport, чтобы предложение всегда было видно — иначе
+        // на длинном документе озвучка убегает вниз, а текст стоит вверху.
+        try { target.BringIntoView(); } catch { /* во время анимации может бросать */ }
+    }
+
+    private void ClearSpeechHighlight()
+    {
+        if (_currentlyHighlightedRun != null)
+        {
+            _currentlyHighlightedRun.Background = null;
+            _currentlyHighlightedRun = null;
+        }
+    }
+
+    /// <summary>Полупрозрачный AccentBrush текущей темы — на любой палитре виден.</summary>
+    private Brush GetSentenceHighlightBrush()
+    {
+        if (Application.Current?.Resources["AccentBrush"] is SolidColorBrush accent)
+        {
+            var c = accent.Color;
+            return new SolidColorBrush(Color.FromArgb(96, c.R, c.G, c.B));
+        }
+        return new SolidColorBrush(Color.FromArgb(96, 100, 180, 255));
     }
 
     private void OnReadingViewerPreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -265,9 +444,22 @@ public partial class MainWindow : Window
 
     private void OnWindowPreviewKeyDownForAutoScroll(object sender, KeyEventArgs e)
     {
-        if (_autoScrollActive && e.Key == Key.Escape)
+        if (e.Key != Key.Escape)
+        {
+            return;
+        }
+
+        // Esc приоритетно гасит autoscroll. Если автопрокрутка не активна,
+        // но пользователь в reading mode — Esc выходит из режима. Это
+        // привычно по аналогии с fullscreen в браузерах/плеерах.
+        if (_autoScrollActive)
         {
             StopAutoScroll();
+            e.Handled = true;
+        }
+        else if (_viewModel.IsReadingMode)
+        {
+            _viewModel.IsReadingMode = false;
             e.Handled = true;
         }
     }
@@ -329,11 +521,17 @@ public partial class MainWindow : Window
         var dt = (now - _autoScrollLastFrameTime).TotalSeconds;
         _autoScrollLastFrameTime = now;
 
-        // Аномально большой dt (например, окно было свёрнуто) — пропускаем,
-        // иначе рывок на сотни пикселей за один frame.
-        if (dt <= 0 || dt > 0.1)
+        if (dt <= 0)
         {
             return;
+        }
+
+        // Один лагнувший кадр (например, ScrollToVerticalOffset подвис на
+        // тяжёлом FlowDocument) не должен превращаться в прыжок на сотни
+        // пикселей. Клипуем dt сверху.
+        if (dt > AutoScrollMaxFrameDt)
+        {
+            dt = AutoScrollMaxFrameDt;
         }
 
         var current = Mouse.GetPosition(AutoScrollOverlay);
@@ -353,6 +551,10 @@ public partial class MainWindow : Window
             // Quadratic curve: на маленьких смещениях скорость растёт мягко,
             // на больших — заметно быстрее. Гораздо приятнее линейного.
             targetSpeed = direction * beyond * beyond * AutoScrollSpeedFactor;
+            // Верхний предел — защита от зависаний на гигантских документах
+            // с крупным шрифтом, где WPF тратит много времени на layout
+            // при каждом ScrollToVerticalOffset.
+            targetSpeed = Math.Clamp(targetSpeed, -AutoScrollMaxSpeed, AutoScrollMaxSpeed);
             Cursor = direction > 0 ? Cursors.ScrollS : Cursors.ScrollN;
         }
 
@@ -368,6 +570,75 @@ public partial class MainWindow : Window
             _innerScrollViewer.ScrollToVerticalOffset(
                 _innerScrollViewer.VerticalOffset + pxThisFrame);
         }
+    }
+
+    private void OnProfileCardPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // Сохраняем точку начала жеста — drag начинается только если
+        // пользователь сдвинул мышь дальше системного порога. Голый клик
+        // отрабатывает обычной InputBinding'ой (Activate).
+        if (sender is FrameworkElement el && el.DataContext is ProfileItemViewModel vm
+            && !vm.Profile.IsBuiltIn)
+        {
+            _profileDragStartPoint = e.GetPosition(null);
+            _profileDragSource = vm;
+        }
+        else
+        {
+            _profileDragStartPoint = null;
+            _profileDragSource = null;
+        }
+    }
+
+    private void OnProfileCardMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_profileDragStartPoint == null || _profileDragSource == null)
+        {
+            return;
+        }
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _profileDragStartPoint = null;
+            _profileDragSource = null;
+            return;
+        }
+
+        var diff = e.GetPosition(null) - _profileDragStartPoint.Value;
+        if (Math.Abs(diff.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(diff.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        if (sender is FrameworkElement el)
+        {
+            var data = new DataObject(ProfileCardDragFormat, _profileDragSource);
+            DragDrop.DoDragDrop(el, data, DragDropEffects.Move);
+        }
+
+        _profileDragStartPoint = null;
+        _profileDragSource = null;
+    }
+
+    private void OnProfileCardDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(ProfileCardDragFormat))
+        {
+            return;
+        }
+
+        var source = e.Data.GetData(ProfileCardDragFormat) as ProfileItemViewModel;
+        if (source == null) return;
+
+        if (sender is FrameworkElement el &&
+            el.DataContext is ProfileItemViewModel target)
+        {
+            _viewModel.MoveProfile(source, target);
+        }
+
+        // Останавливаем bubbling, чтобы дроп карточки не попал в Window-handler
+        // (там обрабатывается дроп файлов из проводника).
+        e.Handled = true;
     }
 
     private void EnsureInnerScrollViewer()

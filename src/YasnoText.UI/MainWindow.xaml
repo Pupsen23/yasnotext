@@ -12,10 +12,6 @@
         MinWidth="900"
         WindowStartupLocation="CenterScreen"
         AllowDrop="True"
-        DragEnter="OnWindowDragEnter"
-        DragOver="OnWindowDragOver"
-        DragLeave="OnWindowDragLeave"
-        Drop="OnWindowDrop"
         Background="{DynamicResource WindowBackgroundBrush}"
         Foreground="{DynamicResource TextBrush}"
         FontFamily="{DynamicResource UIFontFamily}">
@@ -167,18 +163,29 @@
         </Style>
 
         <DataTemplate x:Key="ProfileCardTemplate" DataType="{x:Type vm:ProfileItemViewModel}">
-            <Border Style="{StaticResource ProfileCardBorder}">
+            <Border Style="{StaticResource ProfileCardBorder}"
+                    AllowDrop="True"
+                    PreviewMouseLeftButtonDown="OnProfileCardPreviewMouseDown"
+                    MouseMove="OnProfileCardMouseMove"
+                    Drop="OnProfileCardDrop">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick"
-                                  Command="{Binding DataContext.SelectProfileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                  CommandParameter="{Binding}" />
+                                  Command="{Binding ActivateCommand}" />
                 </Border.InputBindings>
                 <Border.ContextMenu>
                     <!-- ContextMenu в WPF — отдельный visual tree (Popup), поэтому
                          RelativeSource AncestorType=Window отсюда не работает.
-                         Команда живёт прямо на ProfileItemViewModel и для встроенных
-                         профилей делается серой через CanExecute. -->
+                         Все команды живут на ProfileItemViewModel и для встроенных
+                         профилей серые через CanExecute. -->
                     <ContextMenu>
+                        <MenuItem Header="Активировать"
+                                  Command="{Binding ActivateCommand}" />
+                        <Separator />
+                        <MenuItem Header="Переименовать..."
+                                  Command="{Binding RenameCommand}" />
+                        <MenuItem Header="Сохранить настройки в этот профиль"
+                                  Command="{Binding OverwriteCommand}" />
+                        <Separator />
                         <MenuItem Header="Удалить профиль"
                                   Command="{Binding DeleteCommand}" />
                     </ContextMenu>
@@ -195,11 +202,15 @@
     <DockPanel>
 
         <!-- Главное меню -->
-        <Menu DockPanel.Dock="Top">
+        <Menu DockPanel.Dock="Top"
+              Visibility="{Binding IsNotReadingMode, Converter={StaticResource BoolToVis}}">
             <MenuItem Header="Файл">
                 <MenuItem Header="Открыть..."
                           InputGestureText="Ctrl+O"
                           Command="{Binding OpenDocumentCommand}" />
+                <MenuItem Header="Закрыть документ"
+                          InputGestureText="Ctrl+W"
+                          Command="{Binding CloseDocumentCommand}" />
                 <MenuItem Header="Недавние"
                           ItemsSource="{Binding RecentFiles}"
                           IsEnabled="{Binding HasRecentFiles}">
@@ -221,18 +232,32 @@
                 <MenuItem Header="Выход" Command="{Binding ExitCommand}" />
             </MenuItem>
             <MenuItem Header="Профиль">
-                <MenuItem Header="Стандартный"
-                          InputGestureText="Ctrl+1"
-                          Command="{Binding SelectProfileCommand}"
-                          CommandParameter="{Binding Profiles[0]}" />
-                <MenuItem Header="Слабовидение"
-                          InputGestureText="Ctrl+2"
-                          Command="{Binding SelectProfileCommand}"
-                          CommandParameter="{Binding Profiles[1]}" />
-                <MenuItem Header="Дислексия"
-                          InputGestureText="Ctrl+3"
-                          Command="{Binding SelectProfileCommand}"
-                          CommandParameter="{Binding Profiles[2]}" />
+                <!-- Активные профили — встроенные с хоткеями + пользовательские
+                     в том же списке. ItemsSource биндится к Profiles, поэтому
+                     добавление/удаление/переименование сразу отражаются в меню. -->
+                <MenuItem Header="Активировать" ItemsSource="{Binding Profiles}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Name}" />
+                            <Setter Property="Command" Value="{Binding ActivateCommand}" />
+                            <Setter Property="InputGestureText" Value="{Binding Hotkey}" />
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
+                <Separator />
+                <MenuItem Header="Сохранить как новый профиль..."
+                          InputGestureText="Ctrl+S"
+                          Command="{Binding SaveProfileCommand}" />
+                <MenuItem Header="Сохранить настройки в..."
+                          ItemsSource="{Binding UserProfiles}"
+                          IsEnabled="{Binding HasUserProfiles}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Name}" />
+                            <Setter Property="Command" Value="{Binding OverwriteCommand}" />
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="Вид">
                 <MenuItem Header="Увеличить шрифт"
@@ -241,6 +266,18 @@
                 <MenuItem Header="Уменьшить шрифт"
                           InputGestureText="Ctrl+-"
                           Command="{Binding DecreaseFontCommand}" />
+                <Separator />
+                <MenuItem Header="Режим чтения"
+                          InputGestureText="F11"
+                          Command="{Binding ToggleReadingModeCommand}" />
+            </MenuItem>
+            <MenuItem Header="Озвучка">
+                <MenuItem Header="{Binding PlayPauseLabel}"
+                          InputGestureText="F5"
+                          Command="{Binding PlayPauseCommand}" />
+                <MenuItem Header="Остановить"
+                          InputGestureText="Shift+F5"
+                          Command="{Binding StopSpeechCommand}" />
             </MenuItem>
             <MenuItem Header="Справка">
                 <MenuItem Header="О программе" Command="{Binding ShowAboutCommand}" />
@@ -249,6 +286,7 @@
 
         <!-- Панель инструментов: только то, что реально работает. -->
         <Border DockPanel.Dock="Top"
+                Visibility="{Binding IsNotReadingMode, Converter={StaticResource BoolToVis}}"
                 Background="{DynamicResource WindowBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,0,0,1"
@@ -256,6 +294,10 @@
             <StackPanel Orientation="Horizontal">
                 <Button Content="Открыть"
                         Command="{Binding OpenDocumentCommand}"
+                        Style="{StaticResource ToolbarButton}" />
+                <Button Content="Закрыть"
+                        Command="{Binding CloseDocumentCommand}"
+                        ToolTip="Закрыть документ (Ctrl+W)"
                         Style="{StaticResource ToolbarButton}" />
                 <Button Content="Сохранить настройки"
                         Command="{Binding SaveProfileCommand}"
@@ -284,16 +326,20 @@
                 <Rectangle Width="1" Margin="10,4"
                            Fill="{DynamicResource BorderBrush}" />
 
-                <Button x:Name="AutoScrollButton"
-                        Content="Автопрокрутка"
-                        Click="OnAutoScrollButtonClick"
-                        ToolTip="Включить автопрокрутку. Также — щелчок средней кнопкой мыши по документу. Выход — Esc или любой клик."
+                <Button Content="{Binding PlayPauseLabel}"
+                        Command="{Binding PlayPauseCommand}"
+                        ToolTip="Озвучить текст (F5)"
+                        Style="{StaticResource ToolbarButton}" />
+                <Button Content="Стоп"
+                        Command="{Binding StopSpeechCommand}"
+                        ToolTip="Остановить озвучку (Shift+F5)"
                         Style="{StaticResource ToolbarButton}" />
             </StackPanel>
         </Border>
 
         <!-- Строка состояния -->
         <Border DockPanel.Dock="Bottom"
+                Visibility="{Binding IsNotReadingMode, Converter={StaticResource BoolToVis}}"
                 Background="{DynamicResource SidebarBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,1,0,0"
@@ -316,11 +362,26 @@
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240" />
+                <!-- В режиме чтения колонка sidebar схлопывается до нуля,
+                     иначе при Visibility=Collapsed на самом Border пустые
+                     240 px остаются. -->
+                <ColumnDefinition>
+                    <ColumnDefinition.Style>
+                        <Style TargetType="ColumnDefinition">
+                            <Setter Property="Width" Value="240" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsReadingMode}" Value="True">
+                                    <Setter Property="Width" Value="0" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ColumnDefinition.Style>
+                </ColumnDefinition>
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0"
+                    Visibility="{Binding IsNotReadingMode, Converter={StaticResource BoolToVis}}"
                     Background="{DynamicResource SidebarBackgroundBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,1,0">
@@ -443,6 +504,19 @@
         </Grid>
 
     </DockPanel>
+
+        <!-- Подсказка о выходе из режима чтения. Маленькая плашка в правом
+             верхнем углу, видна только когда IsReadingMode=true. -->
+        <Border Visibility="{Binding IsReadingMode, Converter={StaticResource BoolToVis}}"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Margin="16" Padding="10,5"
+                CornerRadius="4"
+                Background="#A0606060"
+                IsHitTestVisible="False">
+            <TextBlock Text="F11 — выйти из режима чтения"
+                       Foreground="White"
+                       FontSize="11" />
+        </Border>
 
         <!-- Overlay при drag-and-drop файла. IsHitTestVisible=False, чтобы
              события Drop/DragLeave доходили до Window — иначе drop попадал бы
